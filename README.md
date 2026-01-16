@@ -3,6 +3,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/talav/mapstructure.svg)](https://pkg.go.dev/github.com/talav/mapstructure)
 [![Go Report Card](https://goreportcard.com/badge/github.com/talav/mapstructure)](https://goreportcard.com/report/github.com/talav/mapstructure)
 [![CI](https://github.com/talav/mapstructure/actions/workflows/mapstructure-ci.yml/badge.svg)](https://github.com/talav/mapstructure/actions)
+[![codecov](https://codecov.io/gh/Talav/mapstructure/graph/badge.svg?token=ahPYV4ORx0)](https://codecov.io/gh/Talav/mapstructure)
 
 Go library for decoding `map[string]any` values into strongly-typed structs with automatic type conversion and comprehensive struct tag support.
 
