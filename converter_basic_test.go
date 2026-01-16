@@ -39,6 +39,9 @@ func TestConverter_convertBool(t *testing.T) {
 		{"string 0", "0", false, false},
 		{"string empty", "", false, false},
 		{"string invalid", "invalid", false, true},
+		// Unsupported types
+		{"unsupported slice", []int{1, 2, 3}, false, true},
+		{"unsupported map", map[string]int{"a": 1}, false, true},
 	}
 
 	for _, tt := range tests {
@@ -85,6 +88,10 @@ func TestConverter_convertString(t *testing.T) {
 		// []byte
 		{"bytes", []byte("hello"), "hello", false},
 		{"bytes empty", []byte{}, "", false},
+		// Unsupported types
+		{"unsupported slice", []int{1, 2, 3}, "", true},
+		{"unsupported map", map[string]int{"a": 1}, "", true},
+		{"unsupported struct", struct{}{}, "", true},
 	}
 
 	for _, tt := range tests {

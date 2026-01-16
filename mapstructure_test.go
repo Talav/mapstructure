@@ -284,6 +284,22 @@ func TestUnmarshaler_Unmarshal_Errors(t *testing.T) {
 	}
 }
 
+func TestUnmarshaler_Unmarshal_UnsupportedType(t *testing.T) {
+	type Target struct {
+		Complex complex128
+	}
+
+	// Pass a string where a complex128 is expected, and no converter exists
+	data := map[string]any{"Complex": "3+4i"}
+	var target Target
+
+	u := testUnmarshaler()
+	err := u.Unmarshal(data, &target)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no converter registered")
+}
+
 //nolint:forcetypeassert,thelper // Test code - type assertions are expected to succeed
 func TestUnmarshaler_Unmarshal_DirectAssignment(t *testing.T) {
 	type Inner struct {
@@ -942,5 +958,34 @@ func TestUnmarshaler_Unmarshal_SliceFastPaths(t *testing.T) {
 		assert.Len(t, result.Items, 1000)
 		assert.Equal(t, 0, result.Items[0])
 		assert.Equal(t, 999, result.Items[999])
+	})
+
+	t.Run("nil slice", func(t *testing.T) {
+		data := map[string]any{"Items": nil}
+		var result ResultIntSlice
+		err := u.Unmarshal(data, &result)
+
+		require.NoError(t, err)
+		assert.Nil(t, result.Items)
+	})
+
+	t.Run("array to slice conversion", func(t *testing.T) {
+		data := map[string]any{"Items": [3]int{10, 20, 30}}
+		var result ResultIntSlice
+		err := u.Unmarshal(data, &result)
+
+		require.NoError(t, err)
+		assert.Equal(t, []int{10, 20, 30}, result.Items)
+	})
+
+	t.Run("invalid slice type", func(t *testing.T) {
+		data := map[string]any{"Items": "not a slice"}
+		var result ResultIntSlice
+		err := u.Unmarshal(data, &result)
+
+		require.Error(t, err)
+		var convErr *ConversionError
+		require.ErrorAs(t, err, &convErr)
+		assert.Equal(t, "Items", convErr.FieldPath)
 	})
 }
