@@ -11,33 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// testCacheBuilder builds metadata for test structs.
-func testCacheBuilder(typ reflect.Type) (*StructMetadata, error) {
-	fields := make([]FieldMetadata, 0, typ.NumField())
-	for i := range typ.NumField() {
-		f := typ.Field(i)
-		if !f.IsExported() {
-			continue
-		}
-		fields = append(fields, FieldMetadata{
-			StructFieldName: f.Name,
-			MapKey:          f.Name,
-			Index:           i,
-			Type:            f.Type,
-			Embedded:        f.Anonymous,
-		})
-	}
-
-	return &StructMetadata{Fields: fields}, nil
-}
-
+// testUnmarshaler creates an unmarshaler that uses field names directly (no tags).
 func testUnmarshaler() *Unmarshaler {
-	cache := NewStructMetadataCache(CacheBuilderFunc(testCacheBuilder))
+	// "-" means use field names directly
+	cache := NewStructMetadataCache("-", "")
 
-	return &Unmarshaler{
-		fieldCache: cache,
-		converters: NewDefaultConverterRegistry(nil),
-	}
+	return NewUnmarshaler(cache, NewDefaultConverterRegistry())
 }
 
 func TestUnmarshaler_Unmarshal_Slices(t *testing.T) {
@@ -617,7 +596,7 @@ func TestUnmarshaler_Unmarshal_DefaultValues_CustomConverter(t *testing.T) {
 	}
 
 	// Create unmarshaler with custom converters
-	cache := NewStructMetadataCache(DefaultCacheBuilder)
+	cache := NewStructMetadataCache("schema", "")
 	convertersRegistry := NewDefaultConverterRegistry(converters)
 	u := NewUnmarshaler(cache, convertersRegistry)
 

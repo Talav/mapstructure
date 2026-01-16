@@ -6,8 +6,8 @@ import (
 )
 
 var defaultUnmarshaler = &Unmarshaler{
-	fieldCache: NewStructMetadataCache(DefaultCacheBuilder),
-	converters: NewDefaultConverterRegistry(nil),
+	fieldCache: NewDefaultStructMetadataCache(),
+	converters: NewDefaultConverterRegistry(),
 }
 
 // Unmarshal transforms map[string]any into a Go struct pointed to by result.
@@ -27,12 +27,12 @@ type Unmarshaler struct {
 // For custom configurations, construct the cache and converters separately:
 //
 //	// With custom tag
-//	cache := NewStructMetadataCache(NewTagCacheBuilder("schema"))
-//	converters := NewDefaultConverterRegistry(nil)
+//	cache := NewStructMetadataCache("json", "default")
+//	converters := NewDefaultConverterRegistry()
 //	u := NewUnmarshaler(cache, converters)
 //
 //	// With custom converters
-//	cache := NewStructMetadataCache(DefaultCacheBuilder)
+//	cache := NewDefaultStructMetadataCache()
 //	converters := NewDefaultConverterRegistry(customConverters)
 //	u := NewUnmarshaler(cache, converters)
 func NewUnmarshaler(fieldCache *StructMetadataCache, converters *ConverterRegistry) *Unmarshaler {
@@ -43,9 +43,9 @@ func NewUnmarshaler(fieldCache *StructMetadataCache, converters *ConverterRegist
 }
 
 // NewDefaultUnmarshaler creates a new unmarshaler with default settings.
-// Uses DefaultCacheBuilder (field names) and no custom converters.
+// Uses "schema" tags for field mapping and "default" tags for default values.
 func NewDefaultUnmarshaler() *Unmarshaler {
-	return NewUnmarshaler(NewStructMetadataCache(DefaultCacheBuilder), NewDefaultConverterRegistry(nil))
+	return NewUnmarshaler(NewDefaultStructMetadataCache(), NewDefaultConverterRegistry())
 }
 
 // Unmarshal transforms map[string]any into a Go struct pointed to by result.
@@ -82,7 +82,7 @@ func (u *Unmarshaler) unmarshalValue(data any, rv reflect.Value, fieldPath strin
 	if conv, ok := u.converters.Find(typ); ok {
 		converted, err := conv(data)
 		if err != nil {
-			return conversionError(fieldPath, data, typ, err)
+			return NewConversionError(fieldPath, data, typ, err)
 		}
 		rv.Set(converted)
 
@@ -132,7 +132,7 @@ func (u *Unmarshaler) unmarshalSlice(data any, rv reflect.Value, fieldPath strin
 	// Use reflection to handle any slice type ([]any, []byte, []int, etc.)
 	dataVal := reflect.ValueOf(data)
 	if dataVal.Kind() != reflect.Slice && dataVal.Kind() != reflect.Array {
-		return conversionError(fieldPath, data, rv.Type(), nil)
+		return NewConversionError(fieldPath, data, rv.Type(), nil)
 	}
 
 	dataLen := dataVal.Len()
@@ -194,15 +194,12 @@ func (u *Unmarshaler) unmarshalStruct(data any, rv reflect.Value, fieldPath stri
 	// Expect map[string]any for struct data
 	dataMap, ok := data.(map[string]any)
 	if !ok {
-		return conversionError(fieldPath, data, rv.Type(), nil)
+		return NewConversionError(fieldPath, data, rv.Type(), nil)
 	}
 
 	// Get cached fields
 	typ := rv.Type()
-	metadata, err := u.fieldCache.getStructMetadata(typ)
-	if err != nil {
-		return fmt.Errorf("failed to get struct metadata: %w", err)
-	}
+	metadata := u.fieldCache.GetMetadata(typ)
 
 	// Process each cached field
 	for _, field := range metadata.Fields {
@@ -259,11 +256,11 @@ func (u *Unmarshaler) unmarshalEmbeddedField(dataMap map[string]any, fieldValue 
 func validateResultPointer(result any) (reflect.Value, error) {
 	rv := reflect.ValueOf(result)
 	if rv.Kind() != reflect.Ptr {
-		return reflect.Value{}, fmt.Errorf("result must be a pointer")
+		return reflect.Value{}, NewValidationError("result must be a pointer")
 	}
 
 	if rv.IsNil() {
-		return reflect.Value{}, fmt.Errorf("result pointer is nil")
+		return reflect.Value{}, NewValidationError("result pointer is nil")
 	}
 
 	return rv.Elem(), nil
@@ -276,17 +273,4 @@ func buildFieldPath(base, field string) string {
 	}
 
 	return base + "." + field
-}
-
-// conversionError creates a standardized conversion error message.
-func conversionError(fieldPath string, data any, target reflect.Type, cause error) error {
-	if fieldPath == "" {
-		fieldPath = "root"
-	}
-
-	if cause != nil {
-		return fmt.Errorf("%s: cannot convert %T to %v: %w", fieldPath, data, target, cause)
-	}
-
-	return fmt.Errorf("%s: cannot convert %T to %v", fieldPath, data, target)
 }

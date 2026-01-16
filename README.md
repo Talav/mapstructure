@@ -4,7 +4,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/talav/mapstructure)](https://goreportcard.com/report/github.com/talav/mapstructure)
 [![CI](https://github.com/talav/mapstructure/workflows/CI/badge.svg)](https://github.com/talav/mapstructure/actions)
 
-A production-ready Go library for decoding `map[string]any` values into strongly-typed structs with automatic type conversion and comprehensive struct tag support.
+Go library for decoding `map[string]any` values into strongly-typed structs with automatic type conversion and comprehensive struct tag support.
 
 ## Features
 
@@ -269,10 +269,8 @@ if config.Enabled == nil {
 Use a different tag (e.g., `json`, `yaml`, `db`):
 
 ```go
-cache := mapstructure.NewStructMetadataCache(
-    mapstructure.NewTagCacheBuilder("json"),
-)
-converters := mapstructure.NewDefaultConverterRegistry(nil)
+cache := mapstructure.NewStructMetadataCache("json", "default")
+converters := mapstructure.NewDefaultConverterRegistry()
 unmarshaler := mapstructure.NewUnmarshaler(cache, converters)
 
 type User struct {
@@ -283,6 +281,36 @@ type User struct {
 data := map[string]any{"name": "Alice", "email": "alice@example.com"}
 var user User
 unmarshaler.Unmarshal(data, &user)
+```
+
+**Use custom default value tags:**
+
+```go
+// Use "dflt" tag for default values instead of "default"
+cache := mapstructure.NewStructMetadataCache("schema", "dflt")
+unmarshaler := mapstructure.NewUnmarshaler(cache, mapstructure.NewDefaultConverterRegistry())
+
+type Config struct {
+    Host string `schema:"host" dflt:"localhost"`
+    Port int    `schema:"port" dflt:"8080"`
+}
+
+// Missing values will use defaults from "dflt" tag
+data := map[string]any{}
+var config Config
+unmarshaler.Unmarshal(data, &config)
+// Result: Config{Host: "localhost", Port: 8080}
+```
+
+**Cleaner API using defaults:**
+
+```go
+// Uses "schema" + "default" tags
+cache := mapstructure.NewDefaultStructMetadataCache()
+unmarshaler := mapstructure.NewUnmarshaler(cache, mapstructure.NewDefaultConverterRegistry())
+
+// Or even simpler:
+unmarshaler := mapstructure.NewDefaultUnmarshaler()
 ```
 
 ### Custom Converters
@@ -313,7 +341,7 @@ converters := mapstructure.NewDefaultConverterRegistry(map[reflect.Type]mapstruc
     reflect.TypeOf(time.Time{}): timeConverter,
 })
 
-cache := mapstructure.NewStructMetadataCache(nil)
+cache := mapstructure.NewStructMetadataCache("schema", "default")
 unmarshaler := mapstructure.NewUnmarshaler(cache, converters)
 
 type Event struct {
@@ -362,53 +390,6 @@ statusConverter := func(value any) (reflect.Value, error) {
 
 ## Real-World Examples
 
-### JSON to Struct
-
-```go
-import (
-    "encoding/json"
-    "github.com/talav/mapstructure"
-)
-
-// Parse JSON into map first
-jsonData := `{"name":"Alice","age":"30","active":true}`
-var rawData map[string]any
-json.Unmarshal([]byte(jsonData), &rawData)
-
-// Then unmarshal to struct with type conversion
-type User struct {
-    Name   string `schema:"name"`
-    Age    int    `schema:"age"`
-    Active bool   `schema:"active"`
-}
-
-var user User
-mapstructure.Unmarshal(rawData, &user)
-```
-
-### Configuration Loading
-
-```go
-type DatabaseConfig struct {
-    Host     string `schema:"host" default:"localhost"`
-    Port     int    `schema:"port" default:"5432"`
-    User     string `schema:"user" default:"postgres"`
-    Password string `schema:"password"`
-    Database string `schema:"database" default:"myapp"`
-    SSLMode  string `schema:"ssl_mode" default:"disable"`
-}
-
-// Load from environment variables, config file, or any map source
-config := map[string]any{
-    "host":     os.Getenv("DB_HOST"),
-    "password": os.Getenv("DB_PASSWORD"),
-    // Other fields use defaults
-}
-
-var dbConfig DatabaseConfig
-mapstructure.Unmarshal(config, &dbConfig)
-```
-
 ### API Response Parsing
 
 ```go
@@ -441,7 +422,11 @@ if response.Status == "success" {
 
 ## Error Handling
 
-All unmarshaling errors provide detailed context:
+The library provides structured error types for better error handling:
+
+### Structured Error Types
+
+**ConversionError** - Type conversion failures:
 
 ```go
 type Config struct {
@@ -455,27 +440,51 @@ data := map[string]any{
 var config Config
 err := mapstructure.Unmarshal(data, &config)
 if err != nil {
-    // Error: port: cannot parse "not-a-number" as int: ...
-    fmt.Println(err)
+    // Check if it's a conversion error
+    var convErr *mapstructure.ConversionError
+    if errors.As(err, &convErr) {
+        fmt.Printf("Field: %s\n", convErr.FieldPath)      // "port"
+        fmt.Printf("Value: %v\n", convErr.Value)          // "not-a-number"
+        fmt.Printf("Target: %v\n", convErr.TargetType)    // int
+        fmt.Printf("Cause: %v\n", convErr.Cause)          // parsing error
+    }
 }
 ```
 
-**Error types:**
-
-- Field path included in error message
-- Type mismatch errors
-- Conversion errors with original value
-- Validation errors (non-pointer, nil pointer)
+**ValidationError** - Input validation failures:
 
 ```go
 // Non-pointer error
 err := mapstructure.Unmarshal(data, Config{}) // Wrong!
-// Error: result must be a pointer
+var valErr *mapstructure.ValidationError
+if errors.As(err, &valErr) {
+    fmt.Println(valErr.Message) // "result must be a pointer"
+}
 
 // Nil pointer error
 var config *Config
 err := mapstructure.Unmarshal(data, config)
-// Error: result pointer is nil
+// ValidationError: "result pointer is nil"
+```
+
+**Error messages include field paths:**
+
+```go
+type Nested struct {
+    Inner struct {
+        Value int `schema:"value"`
+    } `schema:"inner"`
+}
+
+data := map[string]any{
+    "inner": map[string]any{
+        "value": "invalid",
+    },
+}
+
+var nested Nested
+err := mapstructure.Unmarshal(data, &nested)
+// Error: inner.value: cannot convert string to int
 ```
 
 ## Performance
@@ -486,17 +495,7 @@ The library is optimized for production use:
 - ✅ **Struct metadata caching** - Reflection done once per type
 - ✅ **Fast-path slice operations** - Zero-copy for compatible types
 - ✅ **Immutable converter registry** - Lock-free concurrent reads
-- ✅ **Pre-allocated maps** - Reduced garbage collection
 
-**Benchmarks** (MacBook Pro, 2026, Go 1.25, ARM64):
-
-```
-BenchmarkUnmarshal_SimpleStruct-8     2000000    650 ns/op    376 B/op   4 allocs/op
-BenchmarkUnmarshal_NestedStruct-8     1000000   1200 ns/op    712 B/op   8 allocs/op
-BenchmarkUnmarshal_SliceDirect-8      3000000    450 ns/op    256 B/op   3 allocs/op
-```
-
-Run benchmarks: `go test -bench=. -benchmem`
 
 ## Thread Safety
 
@@ -522,12 +521,6 @@ func handler2() {
 
 ## Testing
 
-The library includes comprehensive testing:
-
-- **Unit tests**: 40+ test functions with 200+ test cases
-- **Coverage**: 90.7% statement coverage
-- **Edge cases**: Extensive testing of error paths and corner cases
-- **Race detection**: Verified with `go test -race`
 
 ```bash
 # Run tests
@@ -580,22 +573,25 @@ type FieldMetadata struct {
 ### Constructors
 
 ```go
-// NewUnmarshaler creates a new unmarshaler with custom configuration
+// NewUnmarshaler creates a new unmarshaler with explicit dependencies
 func NewUnmarshaler(cache *StructMetadataCache, converters *ConverterRegistry) *Unmarshaler
 
 // NewDefaultUnmarshaler creates an unmarshaler with default settings
 func NewDefaultUnmarshaler() *Unmarshaler
 
 // NewStructMetadataCache creates a metadata cache
-// builder = nil uses DefaultCacheBuilder (schema tag)
-func NewStructMetadataCache(builder CacheBuilderFunc) *StructMetadataCache
+// tagName specifies which tag to read for field mapping (e.g., "schema", "json", "yaml")
+// defaultTagName specifies which tag to read for default values (e.g., "default")
+// Use "-" for tagName to ignore tags and map by field names only
+// Empty strings default to "schema" and "default" respectively
+func NewStructMetadataCache(tagName, defaultTagName string) *StructMetadataCache
 
-// NewTagCacheBuilder creates a cache builder for a specific tag
-func NewTagCacheBuilder(tagName string) CacheBuilderFunc
+// NewDefaultStructMetadataCache creates a cache with default tag names ("schema", "default")
+func NewDefaultStructMetadataCache() *StructMetadataCache
 
 // NewDefaultConverterRegistry creates a registry with standard converters
-// additional converters can override or extend defaults
-func NewDefaultConverterRegistry(additional map[reflect.Type]Converter) *ConverterRegistry
+// additional converter maps can override or extend defaults
+func NewDefaultConverterRegistry(additional ...map[reflect.Type]Converter) *ConverterRegistry
 
 // NewConverterRegistry creates a registry with only specified converters
 func NewConverterRegistry(converters map[reflect.Type]Converter) *ConverterRegistry
@@ -606,6 +602,10 @@ func NewConverterRegistry(converters map[reflect.Type]Converter) *ConverterRegis
 ```go
 // Unmarshal transforms map[string]any into result struct
 func (u *Unmarshaler) Unmarshal(data map[string]any, result any) error
+
+// GetMetadata retrieves or builds cached struct field metadata
+// Safe for concurrent use; useful for pre-warming cache or introspection
+func (c *StructMetadataCache) GetMetadata(typ reflect.Type) *StructMetadata
 
 // Find looks up a converter for the given type
 func (r *ConverterRegistry) Find(typ reflect.Type) (Converter, bool)
@@ -655,14 +655,6 @@ data := map[string]any{
 }
 ```
 
-**Recommendation:** Validate business rules after unmarshaling.
-
-### Performance Considerations
-
-- First unmarshal of a type triggers reflection (cached afterward)
-- Deep nesting may impact performance
-- Large slices are handled efficiently with fast paths
-- Custom converters should be fast (called per field)
 
 ## API Stability
 
@@ -671,31 +663,9 @@ This library follows semantic versioning. The public API is stable for v1.x:
 **Stable APIs:**
 - `Unmarshal()`
 - `NewUnmarshaler()`, `NewDefaultUnmarshaler()`
-- `NewStructMetadataCache()`, `NewTagCacheBuilder()`
+- `NewStructMetadataCache()`, `NewDefaultStructMetadataCache()`
 - `NewDefaultConverterRegistry()`, `NewConverterRegistry()`
 - All exported types and methods
-
-**Breaking changes only in major versions** (v2.0.0+)
-
-## Dependencies
-
-**Runtime dependencies:**
-- [`github.com/talav/tagparser`](https://github.com/talav/tagparser) v1.0.1 - Struct tag parsing
-
-**Testing dependencies:**
-- `github.com/stretchr/testify` v1.11.1
-
-Total: **1 runtime dependency** 🎉
-
-## Contributing
-
-Contributions are welcome! Please:
-
-1. **Open an issue** first to discuss major changes
-2. **Add tests** for new functionality (maintain 90%+ coverage)
-3. **Run linters**: `golangci-lint run`
-4. **Update docs** if changing public API
-5. **Follow Go conventions** and existing code style
 
 ### Development Commands
 
@@ -726,25 +696,6 @@ MIT License - see [LICENSE](LICENSE) file for details.
 Developed by [Talav](https://github.com/talav).
 
 Tag parsing powered by [tagparser](https://github.com/talav/tagparser).
-
----
-
-## FAQ
-
-**Q: Why use this over `encoding/json`?**  
-A: When you already have `map[string]any` (from JSON, YAML, config files, etc.) and need type conversion, validation, or custom field mapping.
-
-**Q: Can I validate required fields?**  
-A: Currently, use pointers and check for nil. Required field validation may be added in v2.0.0.
-
-**Q: How do I handle unknown fields?**  
-A: Unknown fields are silently ignored. Use a separate validation step if you need strict checking.
-
-**Q: Is it production-ready?**  
-A: Yes! 90%+ test coverage, race-tested, battle-tested in production environments.
-
-**Q: What about performance?**  
-A: Optimized with caching, fast paths, and zero-allocation operations where possible. See benchmarks above.
 
 ---
 

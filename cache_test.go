@@ -69,7 +69,7 @@ func TestParseFieldTag(t *testing.T) {
 	}
 }
 
-func TestNewTagCacheBuilder(t *testing.T) {
+func TestStructMetadataCache_TagNames(t *testing.T) {
 	type TestStruct struct {
 		Name     string `schema:"name"`
 		Age      int    `schema:"age"`
@@ -79,9 +79,8 @@ func TestNewTagCacheBuilder(t *testing.T) {
 	}
 
 	t.Run("schema tag", func(t *testing.T) {
-		builder := NewTagCacheBuilder("schema")
-		metadata, err := builder(reflect.TypeOf(TestStruct{}))
-		require.NoError(t, err)
+		cache := NewStructMetadataCache("schema", "")
+		metadata := cache.GetMetadata(reflect.TypeOf(TestStruct{}))
 
 		// Should have 4 fields (Name, Age, NoTag, JSONOnly - Ignored is skipped)
 		assert.Len(t, metadata.Fields, 4)
@@ -100,9 +99,8 @@ func TestNewTagCacheBuilder(t *testing.T) {
 	})
 
 	t.Run("json tag", func(t *testing.T) {
-		builder := NewTagCacheBuilder("json")
-		metadata, err := builder(reflect.TypeOf(TestStruct{}))
-		require.NoError(t, err)
+		cache := NewStructMetadataCache("json", "")
+		metadata := cache.GetMetadata(reflect.TypeOf(TestStruct{}))
 
 		fieldMap := make(map[string]string)
 		for _, f := range metadata.Fields {
@@ -114,115 +112,104 @@ func TestNewTagCacheBuilder(t *testing.T) {
 		// Others use field name (no json tag)
 		assert.Equal(t, "Name", fieldMap["Name"])
 	})
-}
 
-func TestDefaultCacheBuilder_UsesSchemaTag(t *testing.T) {
-	type TestStruct struct {
-		Field1 string `schema:"custom_field"`
-		Field2 int    `schema:"-"`
-		Field3 bool
-	}
+	t.Run("empty string defaults to schema", func(t *testing.T) {
+		cache := NewStructMetadataCache("", "")
+		metadata := cache.GetMetadata(reflect.TypeOf(TestStruct{}))
 
-	metadata, err := DefaultCacheBuilder(reflect.TypeOf(TestStruct{}))
-	require.NoError(t, err)
+		// Should parse as schema tag (default)
+		assert.Len(t, metadata.Fields, 4)
 
-	assert.Len(t, metadata.Fields, 2)
-
-	fieldMap := make(map[string]string)
-	for _, f := range metadata.Fields {
-		fieldMap[f.StructFieldName] = f.MapKey
-	}
-
-	assert.Equal(t, "custom_field", fieldMap["Field1"])
-	assert.Equal(t, "Field3", fieldMap["Field3"])
-	_, hasField2 := fieldMap["Field2"]
-	assert.False(t, hasField2)
-}
-
-func TestNewTagCacheBuilder_EmbeddedStruct(t *testing.T) {
-	type Inner struct {
-		Value string `schema:"inner_value"`
-	}
-
-	type Outer struct {
-		Inner
-		Name string `schema:"name"`
-	}
-
-	builder := NewTagCacheBuilder("schema")
-	metadata, err := builder(reflect.TypeOf(Outer{}))
-	require.NoError(t, err)
-
-	assert.Len(t, metadata.Fields, 2)
-
-	var embeddedField *FieldMetadata
-	for i := range metadata.Fields {
-		if metadata.Fields[i].StructFieldName == "Inner" {
-			embeddedField = &metadata.Fields[i]
-
-			break
+		fieldMap := make(map[string]string)
+		for _, f := range metadata.Fields {
+			fieldMap[f.StructFieldName] = f.MapKey
 		}
-	}
 
-	require.NotNil(t, embeddedField)
-	assert.True(t, embeddedField.Embedded)
+		assert.Equal(t, "name", fieldMap["Name"])
+		assert.Equal(t, "age", fieldMap["Age"])
+		_, hasIgnored := fieldMap["Ignored"]
+		assert.False(t, hasIgnored, "schema:'-' field should be ignored")
+	})
+
+	t.Run("field names only with dash", func(t *testing.T) {
+		// "-" means ignore all tags and use field names directly
+		cache := NewStructMetadataCache("-", "")
+		metadata := cache.GetMetadata(reflect.TypeOf(TestStruct{}))
+
+		// Should have all exported fields (including Ignored)
+		assert.Len(t, metadata.Fields, 5)
+
+		fieldMap := make(map[string]string)
+		for _, f := range metadata.Fields {
+			fieldMap[f.StructFieldName] = f.MapKey
+		}
+
+		// All fields should use their struct field names, ignoring tags
+		assert.Equal(t, "Name", fieldMap["Name"])
+		assert.Equal(t, "Age", fieldMap["Age"])
+		assert.Equal(t, "Ignored", fieldMap["Ignored"]) // Not skipped when using "-"
+		assert.Equal(t, "NoTag", fieldMap["NoTag"])
+		assert.Equal(t, "JSONOnly", fieldMap["JSONOnly"])
+	})
 }
 
-func TestNewTagCacheBuilder_UnexportedFieldsIgnored(t *testing.T) {
-	type TestStruct struct {
-		Exported   string `schema:"exported"`
-		unexported string `schema:"unexported"` //nolint:unused // intentionally testing unexported
-	}
+func TestStructMetadataCache_SpecialFieldTypes(t *testing.T) {
+	t.Run("embedded struct", func(t *testing.T) {
+		type Inner struct {
+			Value string `schema:"inner_value"`
+		}
 
-	builder := NewTagCacheBuilder("schema")
-	metadata, err := builder(reflect.TypeOf(TestStruct{}))
-	require.NoError(t, err)
+		type Outer struct {
+			Inner
+			Name string `schema:"name"`
+		}
 
-	assert.Len(t, metadata.Fields, 1)
-	assert.Equal(t, "Exported", metadata.Fields[0].StructFieldName)
+		cache := NewStructMetadataCache("schema", "")
+		metadata := cache.GetMetadata(reflect.TypeOf(Outer{}))
+
+		assert.Len(t, metadata.Fields, 2)
+
+		var embeddedField *FieldMetadata
+		for i := range metadata.Fields {
+			if metadata.Fields[i].StructFieldName == "Inner" {
+				embeddedField = &metadata.Fields[i]
+
+				break
+			}
+		}
+
+		require.NotNil(t, embeddedField)
+		assert.True(t, embeddedField.Embedded)
+	})
+
+	t.Run("unexported fields ignored", func(t *testing.T) {
+		type TestStruct struct {
+			Exported   string `schema:"exported"`
+			unexported string `schema:"unexported"` //nolint:unused // intentionally testing unexported
+		}
+
+		cache := NewStructMetadataCache("schema", "")
+		metadata := cache.GetMetadata(reflect.TypeOf(TestStruct{}))
+
+		assert.Len(t, metadata.Fields, 1)
+		assert.Equal(t, "Exported", metadata.Fields[0].StructFieldName)
+	})
 }
 
-func TestNewStructMetadataCache_NilBuilder(t *testing.T) {
-	type TestStruct struct {
-		Name string `schema:"name"`
-		Age  int    `schema:"age"`
-	}
-
-	// Create cache with nil builder - should use DefaultCacheBuilder
-	cache := NewStructMetadataCache(nil)
-
-	metadata, err := cache.getStructMetadata(reflect.TypeOf(TestStruct{}))
-	require.NoError(t, err)
-	require.NotNil(t, metadata)
-
-	// Should have parsed schema tags using default builder
-	assert.Len(t, metadata.Fields, 2)
-
-	fieldMap := make(map[string]string)
-	for _, f := range metadata.Fields {
-		fieldMap[f.StructFieldName] = f.MapKey
-	}
-
-	assert.Equal(t, "name", fieldMap["Name"])
-	assert.Equal(t, "age", fieldMap["Age"])
-}
-
-func TestStructMetadataCache_GetStructMetadata_Caching(t *testing.T) {
+func TestStructMetadataCache_Caching(t *testing.T) {
 	type TestStruct struct {
 		Field1 string `schema:"field1"`
 	}
 
-	cache := NewStructMetadataCache(DefaultCacheBuilder)
+	cache := NewStructMetadataCache("schema", "")
 	typ := reflect.TypeOf(TestStruct{})
 
 	// First call - should build metadata
-	metadata1, err := cache.getStructMetadata(typ)
-	require.NoError(t, err)
+	metadata1 := cache.GetMetadata(typ)
 	require.NotNil(t, metadata1)
 
 	// Second call - should return cached metadata
-	metadata2, err := cache.getStructMetadata(typ)
-	require.NoError(t, err)
+	metadata2 := cache.GetMetadata(typ)
 	require.NotNil(t, metadata2)
 
 	// Should be the same instance from cache
@@ -230,4 +217,101 @@ func TestStructMetadataCache_GetStructMetadata_Caching(t *testing.T) {
 	assert.Len(t, metadata2.Fields, 1)
 	assert.Equal(t, "field1", metadata1.Fields[0].MapKey)
 	assert.Equal(t, "field1", metadata2.Fields[0].MapKey)
+}
+
+func TestNewDefaultStructMetadataCache(t *testing.T) {
+	type TestStruct struct {
+		Name string `schema:"name" default:"John"`
+		Age  int    `schema:"age" default:"30"`
+	}
+
+	// Create cache with defaults
+	cache := NewDefaultStructMetadataCache()
+	metadata := cache.GetMetadata(reflect.TypeOf(TestStruct{}))
+
+	// Should use "schema" tag for field mapping
+	fieldMap := make(map[string]string)
+	for _, f := range metadata.Fields {
+		fieldMap[f.StructFieldName] = f.MapKey
+	}
+	assert.Equal(t, "name", fieldMap["Name"])
+	assert.Equal(t, "age", fieldMap["Age"])
+
+	// Should use "default" tag for default values
+	defaultMap := make(map[string]*string)
+	for _, f := range metadata.Fields {
+		defaultMap[f.StructFieldName] = f.Default
+	}
+	assert.NotNil(t, defaultMap["Name"])
+	assert.Equal(t, "John", *defaultMap["Name"])
+	assert.NotNil(t, defaultMap["Age"])
+	assert.Equal(t, "30", *defaultMap["Age"])
+}
+
+func TestStructMetadataCache_CustomDefaultTag(t *testing.T) {
+	type TestStruct struct {
+		Name    string `schema:"name" default:"John Doe"`
+		Age     int    `schema:"age" dflt:"25"`
+		City    string `schema:"city" default:"NYC"`
+		Country string `schema:"country" dflt:"USA"`
+	}
+
+	t.Run("standard default tag", func(t *testing.T) {
+		cache := NewStructMetadataCache("schema", "default")
+		metadata := cache.GetMetadata(reflect.TypeOf(TestStruct{}))
+
+		// Check which fields have default values
+		defaultMap := make(map[string]*string)
+		for _, f := range metadata.Fields {
+			defaultMap[f.StructFieldName] = f.Default
+		}
+
+		assert.NotNil(t, defaultMap["Name"])
+		assert.Equal(t, "John Doe", *defaultMap["Name"])
+
+		assert.Nil(t, defaultMap["Age"]) // Has dflt tag, not default
+
+		assert.NotNil(t, defaultMap["City"])
+		assert.Equal(t, "NYC", *defaultMap["City"])
+
+		assert.Nil(t, defaultMap["Country"]) // Has dflt tag, not default
+	})
+
+	t.Run("custom default tag", func(t *testing.T) {
+		cache := NewStructMetadataCache("schema", "dflt")
+		metadata := cache.GetMetadata(reflect.TypeOf(TestStruct{}))
+
+		// Check which fields have default values
+		defaultMap := make(map[string]*string)
+		for _, f := range metadata.Fields {
+			defaultMap[f.StructFieldName] = f.Default
+		}
+
+		assert.Nil(t, defaultMap["Name"]) // Has default tag, not dflt
+
+		assert.NotNil(t, defaultMap["Age"])
+		assert.Equal(t, "25", *defaultMap["Age"])
+
+		assert.Nil(t, defaultMap["City"]) // Has default tag, not dflt
+
+		assert.NotNil(t, defaultMap["Country"])
+		assert.Equal(t, "USA", *defaultMap["Country"])
+	})
+
+	t.Run("empty default tag defaults to 'default'", func(t *testing.T) {
+		cache := NewStructMetadataCache("schema", "")
+		metadata := cache.GetMetadata(reflect.TypeOf(TestStruct{}))
+
+		// Check which fields have default values
+		defaultMap := make(map[string]*string)
+		for _, f := range metadata.Fields {
+			defaultMap[f.StructFieldName] = f.Default
+		}
+
+		// Should use "default" tag
+		assert.NotNil(t, defaultMap["Name"])
+		assert.Equal(t, "John Doe", *defaultMap["Name"])
+		assert.NotNil(t, defaultMap["City"])
+		assert.Equal(t, "NYC", *defaultMap["City"])
+	})
 }

@@ -25,8 +25,9 @@ func NewConverterRegistry(converters map[reflect.Type]Converter) *ConverterRegis
 }
 
 // NewDefaultConverterRegistry creates a registry with standard type converters.
-// Additional converters can be provided to extend or override defaults.
-func NewDefaultConverterRegistry(additional map[reflect.Type]Converter) *ConverterRegistry {
+// Additional converter maps can be provided to extend or override defaults.
+// If multiple maps are provided, they are merged in order (later maps override earlier ones).
+func NewDefaultConverterRegistry(additional ...map[reflect.Type]Converter) *ConverterRegistry {
 	converters := map[reflect.Type]Converter{
 		reflect.TypeOf(string("")):                   convertString,
 		reflect.TypeOf(bool(false)):                  convertBool,
@@ -47,7 +48,9 @@ func NewDefaultConverterRegistry(additional map[reflect.Type]Converter) *Convert
 	}
 
 	// Merge additional converters (allows override)
-	maps.Copy(converters, additional)
+	for _, additionalMap := range additional {
+		maps.Copy(converters, additionalMap)
+	}
 
 	return &ConverterRegistry{
 		converters: converters,

@@ -1,54 +1,117 @@
 package mapstructure
 
 import (
-	"fmt"
 	"reflect"
 	"sync"
 
 	"github.com/talav/tagparser"
 )
 
-// CacheBuilderFunc builds struct metadata for caching.
-type CacheBuilderFunc func(typ reflect.Type) (*StructMetadata, error)
+const (
+	// DefaultTagName is the default struct tag name for field mapping.
+	DefaultTagName = "schema"
 
-// DefaultCacheBuilder builds struct metadata using "schema" tags.
-var DefaultCacheBuilder = NewTagCacheBuilder("schema")
+	// DefaultValueTagName is the default struct tag name for default values.
+	DefaultValueTagName = "default"
+)
 
-// NewTagCacheBuilder creates a cache builder that parses struct tags.
-// tagName specifies which tag to read (e.g., "schema", "json", "mapstructure").
-func NewTagCacheBuilder(tagName string) CacheBuilderFunc {
-	return func(typ reflect.Type) (*StructMetadata, error) {
-		fields := make([]FieldMetadata, 0, typ.NumField())
-		for i := range typ.NumField() {
-			f := typ.Field(i)
-			if !f.IsExported() {
-				continue
-			}
+// StructMetadataCache provides caching for struct field metadata.
+type StructMetadataCache struct {
+	cache          sync.Map
+	tagName        string
+	defaultTagName string
+}
 
-			mapKey, skip := parseFieldTag(f.Tag.Get(tagName), f.Name)
+// NewStructMetadataCache creates a new struct metadata cache.
+// tagName specifies which tag to read for field mapping (e.g., "schema", "json", "yaml").
+// defaultTagName specifies which tag to read for default values (e.g., "default").
+// Use "-" for tagName to ignore all tags and map fields by their Go struct field names.
+// Empty strings default to "schema" and "default" respectively.
+func NewStructMetadataCache(tagName, defaultTagName string) *StructMetadataCache {
+	if tagName == "" {
+		tagName = DefaultTagName
+	}
+	if defaultTagName == "" {
+		defaultTagName = DefaultValueTagName
+	}
+
+	return &StructMetadataCache{
+		tagName:        tagName,
+		defaultTagName: defaultTagName,
+	}
+}
+
+// NewDefaultStructMetadataCache creates a struct metadata cache with default tag names.
+// Uses "schema" for field mapping and "default" for default values.
+// This is equivalent to NewStructMetadataCache(DefaultTagName, DefaultValueTagName).
+func NewDefaultStructMetadataCache() *StructMetadataCache {
+	return NewStructMetadataCache(DefaultTagName, DefaultValueTagName)
+}
+
+// GetMetadata retrieves or builds cached struct field metadata for the given type.
+// This method is safe for concurrent use and will cache the result for subsequent calls.
+//
+// This is useful for:
+//   - Pre-warming the cache before hot paths
+//   - Introspecting struct metadata for tooling
+//   - Testing cache behavior
+func (c *StructMetadataCache) GetMetadata(typ reflect.Type) *StructMetadata {
+	// Check cache first
+	if cached, ok := c.cache.Load(typ); ok {
+		if metadata, ok := cached.(*StructMetadata); ok {
+			return metadata
+		}
+	}
+
+	// Build metadata
+	metadata := c.buildMetadata(typ)
+
+	// Store in cache (or get existing if another goroutine stored it first)
+	actual, _ := c.cache.LoadOrStore(typ, metadata)
+	metadata, _ = actual.(*StructMetadata)
+
+	return metadata
+}
+
+// buildMetadata builds struct metadata by parsing struct tags.
+func (c *StructMetadataCache) buildMetadata(typ reflect.Type) *StructMetadata {
+	fields := make([]FieldMetadata, 0, typ.NumField())
+
+	for i := range typ.NumField() {
+		f := typ.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+
+		// If tagName is "-", use field name directly without reading tags
+		var mapKey string
+		var skip bool
+		if c.tagName == "-" {
+			mapKey = f.Name
+		} else {
+			mapKey, skip = parseFieldTag(f.Tag.Get(c.tagName), f.Name)
 			if skip {
 				continue
 			}
-
-			// Store raw default pointer - conversion happens at unmarshal time
-			// using the unmarshaler's converter registry
-			var defaultPtr *string
-			if v, ok := f.Tag.Lookup("default"); ok {
-				defaultPtr = &v
-			}
-
-			fields = append(fields, FieldMetadata{
-				StructFieldName: f.Name,
-				MapKey:          mapKey,
-				Index:           i,
-				Type:            f.Type,
-				Embedded:        f.Anonymous,
-				Default:         defaultPtr,
-			})
 		}
 
-		return &StructMetadata{Fields: fields}, nil
+		// Store raw default pointer - conversion happens at unmarshal time
+		var defaultPtr *string
+		if v, ok := f.Tag.Lookup(c.defaultTagName); ok {
+			defaultPtr = &v
+		}
+
+		fields = append(fields, FieldMetadata{
+			StructFieldName: f.Name,
+			MapKey:          mapKey,
+			Index:           i,
+			Type:            f.Type,
+			Embedded:        f.Anonymous,
+			Default:         defaultPtr,
+		})
 	}
+
+	return &StructMetadata{Fields: fields}
 }
 
 // parseFieldTag extracts the map key from a tag value.
@@ -72,44 +135,4 @@ func parseFieldTag(tagValue, fieldName string) (string, bool) {
 	}
 
 	return tag.Name, false
-}
-
-// StructMetadataCache provides caching for struct field metadata.
-type StructMetadataCache struct {
-	cache   sync.Map
-	builder CacheBuilderFunc
-}
-
-// NewStructMetadataCache creates a new struct metadata cache.
-// If builder is nil, DefaultCacheBuilder is used.
-func NewStructMetadataCache(builder CacheBuilderFunc) *StructMetadataCache {
-	if builder == nil {
-		builder = DefaultCacheBuilder
-	}
-
-	return &StructMetadataCache{
-		builder: builder,
-	}
-}
-
-// getStructMetadata retrieves or builds cached struct field metadata.
-func (c *StructMetadataCache) getStructMetadata(typ reflect.Type) (*StructMetadata, error) {
-	// Check cache first
-	if cached, ok := c.cache.Load(typ); ok {
-		if metadata, ok := cached.(*StructMetadata); ok {
-			return metadata, nil
-		}
-	}
-
-	// Build metadata
-	metadata, err := c.builder(typ)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build struct metadata: %w", err)
-	}
-
-	// Store in cache (or get existing if another goroutine stored it first)
-	actual, _ := c.cache.LoadOrStore(typ, metadata)
-	metadata, _ = actual.(*StructMetadata)
-
-	return metadata, nil
 }
