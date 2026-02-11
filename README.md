@@ -1,23 +1,25 @@
 # mapstructure
 
+[![tag](https://img.shields.io/github/tag/talav/mapstructure.svg)](https://github.com/talav/mapstructure/tags)
 [![Go Reference](https://pkg.go.dev/badge/github.com/talav/mapstructure.svg)](https://pkg.go.dev/github.com/talav/mapstructure)
 [![Go Report Card](https://goreportcard.com/badge/github.com/talav/mapstructure)](https://goreportcard.com/report/github.com/talav/mapstructure)
 [![CI](https://github.com/talav/mapstructure/actions/workflows/mapstructure-ci.yml/badge.svg)](https://github.com/talav/mapstructure/actions)
 [![codecov](https://codecov.io/gh/Talav/mapstructure/graph/badge.svg?token=ahPYV4ORx0)](https://codecov.io/gh/Talav/mapstructure)
+[![License](https://img.shields.io/github/license/talav/tagparser)](./LICENSE)
 
 Go library for decoding `map[string]any` values into strongly-typed structs with automatic type conversion and comprehensive struct tag support.
 
 ## Features
 
-* ✅ **Automatic type conversion** - string ↔ int, bool, float, and more
-* ✅ **Struct tag support** - Flexible field name mapping with `schema`, `json`, or custom tags
-* ✅ **Nested structs** - Deep nesting and embedded struct handling
-* ✅ **Default values** - Set defaults via `default` tag
-* ✅ **Custom converters** - Register converters for custom types
-* ✅ **Thread-safe** - Concurrent unmarshaling with cached metadata
-* ✅ **Zero allocations** - Efficient slice and struct unmarshaling
-* ✅ **Battle-tested** - 90%+ test coverage with comprehensive edge cases
-* ✅ **Minimal dependencies** - Only 1 runtime dependency ([tagparser](https://github.com/talav/tagparser))
+- Automatic type conversion between common types (string, int, bool, float, slices)
+- Flexible field mapping with `schema`, `json`, or custom struct tags
+- Nested and embedded struct support with promoted field access
+- Default values via struct tags
+- Custom type converters for domain-specific types
+- Thread-safe with concurrent access support
+- Performance optimized with struct metadata caching
+- Well-tested with 90%+ coverage
+- Only one dependency: [tagparser](https://github.com/talav/tagparser)
 
 ## Installation
 
@@ -238,7 +240,7 @@ var config Config
 mapstructure.Unmarshal(data, &config)
 ```
 
-**⚠️ Detecting missing fields:**
+**Detecting missing fields:**
 
 By default, missing fields get zero values. Use pointers to distinguish missing from zero:
 
@@ -490,20 +492,19 @@ err := mapstructure.Unmarshal(data, &nested)
 
 ## Performance
 
-The library is optimized for production use:
+The library is designed for production use with several optimizations:
 
-**Key optimizations:**
-- ✅ **Struct metadata caching** - Reflection done once per type
-- ✅ **Fast-path slice operations** - Zero-copy for compatible types
-- ✅ **Immutable converter registry** - Lock-free concurrent reads
+- **Struct metadata caching** - Reflection is done once per type and cached for subsequent calls
+- **Fast-path slice operations** - Zero-copy for compatible slice types
+- **Immutable converter registry** - Lock-free reads for concurrent access
 
 
 ## Thread Safety
 
-**Safe for concurrent use:**
-- ✅ `StructMetadataCache` uses `sync.Map` for concurrent access
-- ✅ `ConverterRegistry` is immutable after construction
-- ✅ `Unmarshaler` is safe for concurrent unmarshaling
+All components are safe for concurrent use:
+- `StructMetadataCache` uses `sync.Map` for thread-safe caching
+- `ConverterRegistry` is immutable after construction
+- `Unmarshaler` instances can be shared across goroutines
 
 ```go
 // Safe: Shared unmarshaler across goroutines
@@ -535,88 +536,15 @@ go test -coverprofile=coverage.out
 go tool cover -html=coverage.out
 ```
 
-## API Reference
+## API Documentation
 
-### Top-Level Functions
-
-```go
-// Unmarshal transforms map[string]any into a Go struct
-// Uses default settings (schema tag, standard converters)
-func Unmarshal(data map[string]any, result any) error
-```
-
-### Types
-
-```go
-// Unmarshaler handles unmarshaling with custom configuration
-type Unmarshaler struct { /* ... */ }
-
-// Converter converts a value to a reflect.Value
-type Converter func(value any) (reflect.Value, error)
-
-// ConverterRegistry manages type converters
-type ConverterRegistry struct { /* ... */ }
-
-// StructMetadataCache caches struct field metadata
-type StructMetadataCache struct { /* ... */ }
-
-// FieldMetadata holds cached struct field information
-type FieldMetadata struct {
-    StructFieldName string
-    MapKey          string
-    Index           int
-    Type            reflect.Type
-    Embedded        bool
-    Default         *string
-}
-```
-
-### Constructors
-
-```go
-// NewUnmarshaler creates a new unmarshaler with explicit dependencies
-func NewUnmarshaler(cache *StructMetadataCache, converters *ConverterRegistry) *Unmarshaler
-
-// NewDefaultUnmarshaler creates an unmarshaler with default settings
-func NewDefaultUnmarshaler() *Unmarshaler
-
-// NewStructMetadataCache creates a metadata cache
-// tagName specifies which tag to read for field mapping (e.g., "schema", "json", "yaml")
-// defaultTagName specifies which tag to read for default values (e.g., "default")
-// Use "-" for tagName to ignore tags and map by field names only
-// Empty strings default to "schema" and "default" respectively
-func NewStructMetadataCache(tagName, defaultTagName string) *StructMetadataCache
-
-// NewDefaultStructMetadataCache creates a cache with default tag names ("schema", "default")
-func NewDefaultStructMetadataCache() *StructMetadataCache
-
-// NewDefaultConverterRegistry creates a registry with standard converters
-// additional converter maps can override or extend defaults
-func NewDefaultConverterRegistry(additional ...map[reflect.Type]Converter) *ConverterRegistry
-
-// NewConverterRegistry creates a registry with only specified converters
-func NewConverterRegistry(converters map[reflect.Type]Converter) *ConverterRegistry
-```
-
-### Methods
-
-```go
-// Unmarshal transforms map[string]any into result struct
-func (u *Unmarshaler) Unmarshal(data map[string]any, result any) error
-
-// GetMetadata retrieves or builds cached struct field metadata
-// Safe for concurrent use; useful for pre-warming cache or introspection
-func (c *StructMetadataCache) GetMetadata(typ reflect.Type) *StructMetadata
-
-// Find looks up a converter for the given type
-func (r *ConverterRegistry) Find(typ reflect.Type) (Converter, bool)
-```
+Complete API documentation with examples is available at [pkg.go.dev/github.com/talav/mapstructure](https://pkg.go.dev/github.com/talav/mapstructure).
 
 ## Limitations and Best Practices
 
 ### Missing Fields vs Zero Values
 
-⚠️ **Important:** By default, missing fields receive Go zero values:
+By default, missing fields receive Go zero values:
 
 ```go
 data := map[string]any{"name": "Alice"}
@@ -656,50 +584,10 @@ data := map[string]any{
 }
 ```
 
-
-## API Stability
-
-This library follows semantic versioning. The public API is stable for v1.x:
-
-**Stable APIs:**
-- `Unmarshal()`
-- `NewUnmarshaler()`, `NewDefaultUnmarshaler()`
-- `NewStructMetadataCache()`, `NewDefaultStructMetadataCache()`
-- `NewDefaultConverterRegistry()`, `NewConverterRegistry()`
-- All exported types and methods
-
-### Development Commands
-
-```bash
-# Run tests
-go test -v ./...
-
-# Run with race detector
-go test -race ./...
-
-# Run linters
-golangci-lint run
-
-# Run benchmarks
-go test -bench=. -benchmem
-
-# Generate coverage report
-go test -coverprofile=coverage.out
-go tool cover -html=coverage.out
-```
-
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Credits
 
-Developed by [Talav](https://github.com/talav).
-
 Tag parsing powered by [tagparser](https://github.com/talav/tagparser).
-
----
-
-**Questions?** Open an issue or discussion on [GitHub](https://github.com/talav/mapstructure).
-
-**Found a bug?** Please report it with a minimal reproduction case.
